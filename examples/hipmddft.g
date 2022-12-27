@@ -2,24 +2,27 @@
 
 Load(fftx);
 ImportAll(fftx);
+ImportAll(simt);
 Load(jit);
 Import(jit);
-ImportAll(simt);
+
 
 # use the configuration for small mutidimensional real convolutions
 # later we will have to auto-derive the correct options class
 
 conf := FFTXGlobals.defaultHIPConf();;
 
+t := 160;
+
 ##  end of preamble
 var_1:= var("var_1", BoxND([0,0,0], TReal));
-var_2:= var("var_2", BoxND([24,32,40], TReal));
-var_3:= var("var_3", BoxND([24,32,40], TReal));
+var_2:= var("var_2", BoxND([t,t,t], TReal));
+var_3:= var("var_3", BoxND([t,t,t], TReal));
 var_2:= X;
 var_3:= Y;
 symvar := var("sym", TPtr(TReal));
 transform:= TFCall(TDecl(TDAG([
-   TDAGNode(TTensorI(MDDFT([24,32,40],-1),1,APar, APar), var_3,var_2),
+   TDAGNode(TTensorI(MDDFT([t,t,t],-1),1,APar, APar), var_3,var_2),
 
 ]),
    [var_1]
