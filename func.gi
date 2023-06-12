@@ -373,13 +373,20 @@ PrintIRISJIT := function(code, opts)
     # ckernels := Collect(code, specifiers_func); #get kernel signatures
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     # datas := Collect(code, data); #get device/constant arrays with value
-    # collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
-    #             @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+                @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
     # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
     # values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+    if Length(collection2) > 0 then 
+        code.cmds[1] := decl([], code.cmds[1].cmd);
+        for i in collection2 do
+            i.t.qualifiers[1] := "";
+        od;
+        Append(params, collection2);
+    fi;
     code := SubstTopDown(code, @(1,specifiers_func), e->specifiers_func(e.decl_specs, e.ret, e.id, params, e.cmd)); #changing params to be all inputs
     pts := PrintToString(opts.prettyPrint(code)); #print to string
     # x := 0;
