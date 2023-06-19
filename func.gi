@@ -459,9 +459,9 @@ PrintIRISJIT := function(code, opts)
     # od;
     # Print("------------------");
     for i in [5..(Length(pts)-1)] do
-        if Length(pts[i]) > 4 and SubString(pts[i], 0, 8) = "#include" then
-            Print("");
-        elif pts[i] = "/* skip */" then 
+        # if Length(pts[i]) > 4 and SubString(pts[i], 0, 8) = "#include" then
+        #     Print("");
+        if pts[i] = "/* skip */" then 
             Print("");
         elif Length(pts[i]) > 4 and SubString(pts[i],0,10) = "__global__" then 
             Print("extern \"C\" ", pts[i],"\n");
