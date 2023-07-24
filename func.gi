@@ -440,7 +440,6 @@ PrintIRISMETAJIT := function(code, opts)
         elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
             Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
             Print(3, " ", x, " ", datas[i].var.t.size, " ", "3 ");
-            # Error();
             for j in [1..Length(_unwrap(datas[i].value))] do
                 Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
             od;
@@ -480,19 +479,26 @@ PrintIRISJIT := function(code, opts)
     # ckernels := Collect(code, specifiers_func); #get kernel signatures
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
-    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
     # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
     # values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+        # Error();
     if Length(collection2) > 0 then 
         code.cmds[1] := decl([], code.cmds[1].cmd);
         for i in collection2 do
-            i.t.qualifiers[1] := "";
+            if IsPtrT(i) then
+                i.t.qualifiers[1] := "";
+                Append(params, [i]);
+            else 
+                var_t := var(i.id, TPtr(i.t.t));
+                Append(params, [var_t]);
+            fi;
+                
         od;
-        Append(params, collection2);
     fi;
     if Length(datas) > 0 then
         for i in datas do 
