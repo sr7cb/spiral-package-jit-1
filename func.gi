@@ -381,12 +381,12 @@ PrintHIPJIT := function(code, opts)
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
-    old_includes := opts.includes;
+    # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
-    opts.includes := [];
+    # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
-    opts.includes := old_includes;
+    # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
     x := 0;
     y := 1;
@@ -570,12 +570,12 @@ PrintIRISMETAJIT := function(code, opts)
     fi;
     code := SubstTopDown(code, data, e-> e.cmd);
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
-    old_includes := opts.includes;
+    # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
-    opts.includes := [];
+    # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
-    opts.includes := old_includes;
+    # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
     Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
 end;
