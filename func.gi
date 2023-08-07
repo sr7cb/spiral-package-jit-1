@@ -264,10 +264,10 @@ PrintHIPJIT2 := function(code, opts)
     od;
 end;
 
-#F PrintHIPJIT(<c>, <opts>)
+#F PrintHIPJIT_8.4<(<c>, <opts>)
 #F    Prints generated code into parseable text file for FFTX jitting with HIP
 #F
-PrintHIPJIT := function(code, opts)
+PrintHIPJIT_8_4 := function(code, opts)
     local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length;
     kernels := Collect(code, cu_call); #get kernel names for input
     ckernels := Collect(code, specifiers_func); #get kernel signatures
@@ -362,4 +362,340 @@ PrintHIPJIT := function(code, opts)
             Print(pts[i], "\n");
         fi;
     od;
+end;
+
+#F PrintHIPJIT<(<c>, <opts>)
+#F    Prints generated code into parseable text file for FFTX jitting with HIP
+#F
+PrintHIPJIT := function(code, opts)
+    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, old_includes, old_skip;
+    kernels := Collect(code, cu_call); #get kernel names for input
+    ckernels := Collect(code, specifiers_func); #get kernel signatures
+    params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
+    datas := Collect(code, data); #get device/constant arrays with value
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+                @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
+    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
+    #Print(opts.prettyPrint(code));
+    code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
+    old_includes := opts.includes;
+    old_skip := opts.unparser.skip;
+    opts.unparser.skip := (self, o, i, is) >> Print("");
+    opts.includes := [];
+    pts := PrintToString(opts.prettyPrint(code)); #print to string
+    opts.includes := old_includes;
+    opts.unparser.skip := old_skip;
+    x := 0;
+    y := 1;
+    Print("JIT BEGIN\n");
+    for i in [1..Length(collection2)] do
+        if IsPtrT(collection2[i].t) then
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+                if collection2[i].t.t.ctype = "int" then
+                    Print(0," ");
+                elif collection2[i].t.t.ctype = "float" then
+                    Print(1, " ");
+                elif collection2[i].t.t.ctype = "double" then
+                    Print(2, " ");
+                else
+                    Print("how???\n");
+                fi;
+            Print("\n");
+            x := x+1;
+            y := y+1;
+        elif IsArrayT(collection2[i].t) then
+            Print(0, " ", collection2[i], " ", collection2[i].t.size, " ", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", collection2[i].t.size, " "); 
+                if collection2[i].t.t.ctype = "int" then
+                    Print(0," ");
+                elif collection2[i].t.t.ctype = "float" then
+                    Print(1, " ");
+                elif collection2[i].t.t.ctype = "double" then
+                    Print(2, " ");
+                else
+                    Print("how???\n");
+                fi;
+            Print("\n");
+            x := x+1;
+        else
+            Print("it got here how???\n");
+        fi;
+    od;
+    for i in [1..Length(datas)] do
+        if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
+            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
+            Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+            if datas[i].var.t.t.ctype = "int" then
+                Print(0," ");
+            elif datas[i].var.t.t.ctype = "float" then
+                Print(1, " ");
+            elif datas[i].var.t.t.ctype = "double" then
+                Print(2, " ");
+            else
+                Print("how???\n");
+            fi;
+            for j in [1..datas[i].var.t.size] do 
+                Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+            od;
+            Print("\n");
+            x := x+1;
+        elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
+            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
+            Print(3, " ", x, " ", datas[i].var.t.size, " ", "3\n"); 
+            x := x+1;
+        else
+            Print("how???\n");
+        fi;
+    od;
+    for i in [1..Length(kernels)] do
+        Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
+        " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        Print("\n");
+    od;
+    Print("------------------");
+    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+end;
+
+#F PrintIRISMETAJIT(<c>, <opts>)
+#F    Prints metadata + generated code into parseable text file for FFTX jitting with IRIS
+#F
+PrintIRISMETAJIT := function(code, opts)
+    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    kernels := Collect(code, cu_call); #get kernel names for input
+    ckernels := Collect(code, specifiers_func); #get kernel signatures
+    params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
+    datas := Collect(code, data); #get device/constant arrays with value
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+                @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
+    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
+    #Print(opts.prettyPrint(code));
+    code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+    x := 0;
+    y := 1;
+    Print("JIT BEGIN\n");
+    for i in [1..Length(collection2)] do
+        if IsPtrT(collection2[i].t) then
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+                if collection2[i].t.t.ctype = "int" then
+                    Print(0," ");
+                elif collection2[i].t.t.ctype = "float" then
+                    Print(1, " ");
+                elif collection2[i].t.t.ctype = "double" then
+                    Print(2, " ");
+                else
+                    Print("how???\n");
+                fi;
+            Print("\n");
+            x := x+1;
+            y := y+1;
+        elif IsArrayT(collection2[i].t) then
+            Print(0, " ", collection2[i], " ", collection2[i].t.size, " ", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", collection2[i].t.size, " "); 
+                if collection2[i].t.t.ctype = "int" then
+                    Print(0," ");
+                elif collection2[i].t.t.ctype = "float" then
+                    Print(1, " ");
+                elif collection2[i].t.t.ctype = "double" then
+                    Print(2, " ");
+                else
+                    Print("how???\n");
+                fi;
+            Print("\n");
+            x := x+1;
+        else
+            Print("it got here how???\n");
+        fi;
+    od;
+    for i in [1..Length(datas)] do
+        if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
+            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
+            Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+            if datas[i].var.t.t.ctype = "int" then
+                Print(0," ");
+            elif datas[i].var.t.t.ctype = "float" then
+                Print(1, " ");
+            elif datas[i].var.t.t.ctype = "double" then
+                Print(2, " ");
+            else
+                Print("how???\n");
+            fi;
+            for j in [1..datas[i].var.t.size] do 
+                Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+            od;
+            Print("\n");
+            x := x+1;
+        elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
+            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
+            Print(3, " ", x, " ", datas[i].var.t.size, " ", "3 ");
+            for j in [1..Length(_unwrap(datas[i].value))] do
+                Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+            od;
+            Print("\n"); 
+            x := x+1;
+        else
+            Print("how???\n");
+        fi;
+    od;
+    for i in [1..Length(kernels)] do
+        Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
+        " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        Print("\n");
+    od;
+    Print("------------------");
+    if Length(collection2) > 0 then 
+    code.cmds[1] := decl([], code.cmds[1].cmd);
+        for i in collection2 do
+            if IsPtrT(i) then
+                i.t.qualifiers[1] := "";
+                Append(params, [i]);
+            else 
+                var_t := var(i.id, TPtr(i.t.t));
+                Append(params, [var_t]);
+            fi;
+                
+        od;
+    fi;
+    if Length(datas) > 0 then
+        for i in datas do 
+            var_t := var(i.var.id, TPtr(i.var.t.t));
+            Append(params, [var_t]);
+        od;
+    fi;
+    code := SubstTopDown(code, data, e-> e.cmd);
+    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
+    old_includes := opts.includes;
+    old_skip := opts.unparser.skip;
+    opts.unparser.skip := (self, o, i, is) >> Print("");
+    opts.includes := [];
+    pts := PrintToString(opts.prettyPrint(code)); #print to string
+    opts.includes := old_includes;
+    opts.unparser.skip := old_skip;
+    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+end;
+
+
+
+#F PrintIRISJIT(<c>, <opts>)
+#F    Prints generated code into parseable text file for FFTX jitting with IRIS
+#F
+PrintIRISJIT := function(code, opts)
+    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    # kernels := Collect(code, cu_call); #get kernel names for input
+    # ckernels := Collect(code, specifiers_func); #get kernel signatures
+    params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
+    datas := Collect(code, data); #get device/constant arrays with value
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsBound(e.decl_specs) = true)), 
+                @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
+    # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    # values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
+    #Print(opts.prettyPrint(code));
+    code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+        # Error();
+    if Length(collection2) > 0 then 
+        code.cmds[1] := decl([], code.cmds[1].cmd);
+        for i in collection2 do
+            if IsPtrT(i) then
+                i.t.qualifiers[1] := "";
+                Append(params, [i]);
+            else 
+                var_t := var(i.id, TPtr(i.t.t));
+                Append(params, [var_t]);
+            fi;
+                
+        od;
+    fi;
+    if Length(datas) > 0 then
+        for i in datas do 
+            var_t := var(i.var.id, TPtr(i.var.t.t));
+            Append(params, [var_t]);
+        od;
+    fi;
+            
+    code := SubstTopDown(code, data, e-> e.cmd);
+    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
+    old_includes := opts.includes;
+    old_skip := opts.unparser.skip;
+    opts.unparser.skip := (self, o, i, is) >> Print("");
+    opts.includes := [];
+    pts := PrintToString(opts.prettyPrint(code)); #print to string
+    opts.includes := old_includes;
+    opts.unparser.skip := old_skip;
+    # x := 0;
+    # y := 1;
+    # Print("JIT BEGIN\n");
+    # for i in [1..Length(collection2)] do
+    #     if IsPtrT(collection2[i].t) then
+    #         Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+    #         Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+    #             if collection2[i].t.t.ctype = "int" then
+    #                 Print(0," ");
+    #             elif collection2[i].t.t.ctype = "float" then
+    #                 Print(1, " ");
+    #             elif collection2[i].t.t.ctype = "double" then
+    #                 Print(2, " ");
+    #             else
+    #                 Print("how???\n");
+    #             fi;
+    #         Print("\n");
+    #         x := x+1;
+    #         y := y+1;
+    #     elif IsArrayT(collection2[i].t) then
+    #         Print(0, " ", collection2[i], " ", collection2[i].t.size, " ", collection2[i].t.t.ctype, "\n");
+    #         Print(3, " ", x, " ", collection2[i].t.size, " "); 
+    #             if collection2[i].t.t.ctype = "int" then
+    #                 Print(0," ");
+    #             elif collection2[i].t.t.ctype = "float" then
+    #                 Print(1, " ");
+    #             elif collection2[i].t.t.ctype = "double" then
+    #                 Print(2, " ");
+    #             else
+    #                 Print("how???\n");
+    #             fi;
+    #         Print("\n");
+    #         x := x+1;
+    #     else
+    #         Print("it got here how???\n");
+    #     fi;
+    # od;
+    # for i in [1..Length(datas)] do
+    #     if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
+    #         Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
+    #         Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+    #         if datas[i].var.t.t.ctype = "int" then
+    #             Print(0," ");
+    #         elif datas[i].var.t.t.ctype = "float" then
+    #             Print(1, " ");
+    #         elif datas[i].var.t.t.ctype = "double" then
+    #             Print(2, " ");
+    #         else
+    #             Print("how???\n");
+    #         fi;
+    #         for j in [1..datas[i].var.t.size] do 
+    #             Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+    #         od;
+    #         Print("\n");
+    #         x := x+1;
+    #     elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
+    #         Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
+    #         Print(3, " ", x, " ", datas[i].var.t.size, " ", "3\n"); 
+    #         x := x+1;
+    #     else
+    #         Print("how???\n");
+    #     fi;
+    # od;
+    # for i in [1..Length(kernels)] do
+    #     Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
+    #     " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+    #     Print("\n");
+    # od;
+    # Print("------------------");
+    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
 end;
