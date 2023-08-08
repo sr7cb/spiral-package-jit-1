@@ -548,6 +548,14 @@ PrintIRISMETAJIT := function(code, opts)
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
         Print("\n");
     od;
+    for i in [1..Length(params)] do 
+        Print("4 ", params[i].id);
+        if IsBound(params[i].t.t.ctype) then
+            Print(" pointer_", params[i].t.t.ctype, "\n");
+        else
+            Print(params[i].t.ctype, "\n");
+        fi;
+    od;
     Print("------------------");
     if Length(collection2) > 0 then 
     code.cmds[1] := decl([], code.cmds[1].cmd);
