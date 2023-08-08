@@ -496,8 +496,8 @@ PrintIRISMETAJIT := function(code, opts)
             x := x+1;
             y := y+1;
         elif IsArrayT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", collection2[i].t.size, " ", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", collection2[i].t.size, " "); 
+            Print(0, " ", collection2[i], " ", _unwrap(collection2[i].t.size), " ", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(collection2[i].t.size), " "); 
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -550,10 +550,10 @@ PrintIRISMETAJIT := function(code, opts)
     od;
     for i in [1..Length(params)] do 
         Print("4 ", params[i].id);
-        if IsBound(params[i].t.t.ctype) then
+        if IsBound(params[i].t.t) and IsBound(params[i].t.t.ctype) then
             Print(" pointer_", params[i].t.t.ctype, "\n");
         else
-            Print(params[i].t.ctype, "\n");
+            Print(" ", params[i].t.ctype, "\n");
         fi;
     od;
     Print("------------------");
