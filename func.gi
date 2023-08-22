@@ -381,11 +381,7 @@ PrintHIPJIT := function(code, opts)
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
-<<<<<<< HEAD
     # old_includes := opts.includes;
-=======
-    old_includes := opts.includes;
->>>>>>> c917c76d147b3c182370411f55d94f42e75b3e83
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
