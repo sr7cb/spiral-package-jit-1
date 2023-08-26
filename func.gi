@@ -106,7 +106,7 @@ PrintJIT2 := function(code, opts)
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false)));
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc")); #getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
-    SubstBottomUp(code, @(1,func, e->e.id <> "transform"), e->skip());    
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip());    
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
     code := SubstTopDown(code, @(1, func, e->e.id = "transform"), e-> specifiers_func(["extern \"C\" __global__"], e.ret, opts.cudasubName, e.params, e.cmd));
     old_skip := opts.unparser.skip;
