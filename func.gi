@@ -106,7 +106,7 @@ PrintJIT2 := function(code, opts)
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false)));
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc")); #getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
-    SubstBottomUp(code, @(1,func, e->e.id <> "transform"), e->skip());    
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip());    
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
     code := SubstTopDown(code, @(1, func, e->e.id = "transform"), e-> specifiers_func(["extern \"C\" __global__"], e.ret, opts.cudasubName, e.params, e.cmd));
     old_skip := opts.unparser.skip;
@@ -554,9 +554,8 @@ end;
 #F    Prints metadata + generated code into parseable text file for FFTX jitting with IRIS
 #F
 PrintIRISMETAJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
     kernels := Collect(code, cu_call); #get kernel names for input
-    ckernels := Collect(code, specifiers_func); #get kernel signatures
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
@@ -564,8 +563,28 @@ PrintIRISMETAJIT := function(code, opts)
     ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
-    #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+    if Length(collection2) > 0 then 
+        code.cmds[1] := decl([], code.cmds[1].cmd);
+        for i in collection2 do
+            if IsPtrT(i) then
+                i.t.qualifiers[1] := "";
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [i]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+            else 
+                var_t := var(i.id, TPtr(i.t.t));
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+            fi;
+        od;
+    fi;
+    if Length(datas) > 0 then
+        for i in datas do 
+            var_t := var(i.var.id, TPtr(i.var.t.t));
+            code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+        od;
+    fi;
+    code := SubstTopDown(code, data, e-> e.cmd);
+    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
+    ckernels := Collect(code, specifiers_func); #get kernel signatures
     x := 0;
     y := 1;
     Print("JIT BEGIN\n");
@@ -636,6 +655,9 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(kernels)] do
         Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        for j in ckernels[i].params do
+            Print(" ", j);
+        od;
         Print("\n");
     od;
     for i in [1..Length(params)] do 
@@ -647,27 +669,6 @@ PrintIRISMETAJIT := function(code, opts)
         fi;
     od;
     Print("------------------");
-    if Length(collection2) > 0 then 
-    code.cmds[1] := decl([], code.cmds[1].cmd);
-        for i in collection2 do
-            if IsPtrT(i) then
-                i.t.qualifiers[1] := "";
-                Append(params, [i]);
-            else 
-                var_t := var(i.id, TPtr(i.t.t));
-                Append(params, [var_t]);
-            fi;
-                
-        od;
-    fi;
-    if Length(datas) > 0 then
-        for i in datas do 
-            var_t := var(i.var.id, TPtr(i.var.t.t));
-            Append(params, [var_t]);
-        od;
-    fi;
-    code := SubstTopDown(code, data, e-> e.cmd);
-    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
