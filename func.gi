@@ -669,9 +669,9 @@ PrintOpenCLJIT := function(code, opts)
         fi;
         Print("4 ", params[i].id);
         if IsBound(params[i].t.t) and IsBound(params[i].t.t.ctype) then
-            Print(" pointer_", params[i].t.t.ctype, " ", params[i].t.qualifiers[1], "\n");
+            Print(" pointer_", params[i].t.t.ctype, " ", i, "\n");
         else
-            Print(" ", params[i].t.ctype, " ", params[i].t.qualifiers[1], "\n");
+            Print(" ", params[i].t.ctype, " ", i, "\n");
         fi;
     od;
     Print("------------------");
