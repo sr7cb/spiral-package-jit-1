@@ -656,8 +656,8 @@ PrintOpenCLJIT := function(code, opts)
     #     fi;
     # od;
     for i in [1..Length(kernels)] do
-        Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
-        " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_block.z.value), 
+        " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.x.value));
         for j in ckernels[i].params do
             Print(" ", j);
         od;
