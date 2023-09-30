@@ -690,13 +690,16 @@ end;
 #F    Prints metadata + generated code into parseable text file for FFTX jitting with IRIS
 #F
 PrintIRISMETAJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, 
+            kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip, read_list,
+            write_list, function_interest, local_size;
     kernels := Collect(code, cu_call); #get kernel names for input
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
-    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc" or e.args[1].id = "hipMalloc"));#getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
@@ -706,8 +709,10 @@ PrintIRISMETAJIT := function(code, opts)
             if IsPtrT(i) then
                 i.t.qualifiers[1] := "";
                 code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [i]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
-            else 
+            else
+                local_size := i.t.size; 
                 var_t := var(i.id, TPtr(i.t.t));
+                var_t.t.size := local_size;
                 code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             fi;
         od;
@@ -726,8 +731,8 @@ PrintIRISMETAJIT := function(code, opts)
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", When(IsBound(collection2[i].t.size) and collection2[i].t.size <> 0, _unwrap(collection2[i].t.size), _unwrap(values_ptr[y])), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", When(IsBound(collection2[i].t.size) and collection2[i].t.size <> 0, _unwrap(collection2[i].t.size), _unwrap(values_ptr[y])), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -761,7 +766,7 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(datas)] do
         if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
             Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
-            Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+            Print(3, " ", x, " ",  datas[i].var.t.size, " "); 
             if datas[i].var.t.t.ctype = "int" then
                 Print(0," ");
             elif datas[i].var.t.t.ctype = "float" then
@@ -771,14 +776,11 @@ PrintIRISMETAJIT := function(code, opts)
             else
                 Print("how???\n");
             fi;
-            for j in [1..datas[i].var.t.size] do 
-                Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
-            od;
             Print("\n");
             x := x+1;
         elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
-            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
-            Print(3, " ", x, " ", datas[i].var.t.size, " ", "3 ");
+            Print(0, " ", datas[i].var, " ", Length(_unwrap(datas[1].value)), " ", "constant", "\n");
+            Print(3, " ", x, " ", Length(_unwrap(datas[1].value)), " ", "3 ");
             for j in [1..Length(_unwrap(datas[i].value))] do
                 Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
             od;
@@ -791,8 +793,20 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(kernels)] do
         Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        # function_interest := Collect(code, @(1, specifiers_func, e-> e.id = kernels[i].func));
         for j in ckernels[i].params do
             Print(" ", j);
+            read_list := Collect(code, @(1, assign, e-> j in Collect(e.exp, var)));
+            write_list := Collect(code, @(1, assign, e-> j in Collect(e.loc, var)));
+            if read_list <> [] and write_list = [] then
+                Print(" -1");
+            elif read_list = [] and write_list <> [] then
+                Print(" -2");
+            elif read_list <> [] and write_list <> [] then
+                Print(" -3");
+            else
+                Error("value is never used but in argument list?");
+            fi;
         od;
         Print("\n");
     od;
