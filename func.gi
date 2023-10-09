@@ -708,19 +708,19 @@ PrintIRISMETAJIT := function(code, opts)
         for i in collection2 do
             if IsPtrT(i) then
                 i.t.qualifiers[1] := "";
-                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [i]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [i])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             else
                 local_size := i.t.size; 
                 var_t := var(i.id, TPtr(i.t.t));
                 var_t.t.size := local_size;
-                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             fi;
         od;
     fi;
     if Length(datas) > 0 then
         for i in datas do 
             var_t := var(i.var.id, TPtr(i.var.t.t));
-            code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+            code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
         od;
     fi;
     code := SubstTopDown(code, data, e-> e.cmd);
@@ -793,11 +793,11 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(kernels)] do
         Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
-        # function_interest := Collect(code, @(1, specifiers_func, e-> e.id = kernels[i].func));
+        function_interest := Collect(code, @(1, specifiers_func, e-> e.id = kernels[i].func));
         for j in ckernels[i].params do
             Print(" ", j);
-            read_list := Collect(code, @(1, assign, e-> j in Collect(e.exp, var)));
-            write_list := Collect(code, @(1, assign, e-> j in Collect(e.loc, var)));
+            read_list := Collect(function_interest, @(1, assign, e-> j in Collect(e.exp, var)));
+            write_list := Collect(function_interest, @(1, assign, e-> j in Collect(e.loc, var)));
             if read_list <> [] and write_list = [] then
                 Print(" -1");
             elif read_list = [] and write_list <> [] then
