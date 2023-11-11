@@ -100,29 +100,45 @@ end;
 #F    Prints generated code into parseable text file for FFTX jitting
 #F
 PrintJIT2 := function(code, opts)
-    local pts, collection2, x, y, name, j, i, ptr_length, values_ptr, datas, old_includes, old_skip;
+    local pts, collection2, x, y, name, j, i, ptr_length, values_ptr, data_var, data_var_loc, datas, old_includes, old_includes2, old_skip, old_generated_by;
     datas := Collect(code, data);
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false)));
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc")); #getting sizes of device ptrs
-    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    values_ptr := [];
+    for i in ptr_length do
+      Add(values_ptr, Collect(i, @(1,Value,e->IsInt(e.v))));
+    od;
+    values_ptr := Flat(values_ptr);
+    data_var := Collect(code, @(1, call, e-> e.args[1].id = "cudaMemcpyToSymbol"));
+    data_var_loc := [];
+    for i in data_var do
+      Add(data_var_loc, Collect(i, @(1,var,e->e in collection2)));
+    od;
+    data_var_loc := Flat(data_var_loc);
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip());    
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
     code := SubstTopDown(code, @(1, func, e->e.id = "transform"), e-> specifiers_func(["extern \"C\" __global__"], e.ret, opts.cudasubName, e.params, e.cmd));
     old_skip := opts.unparser.skip;
     old_includes := opts.includes;
+    old_includes2 := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code));
     opts.unparser.skip := old_skip;
     opts.includes := old_includes;
+    opts.unparser.includes := old_includes2;
+    opts.unparser.generated_by := old_generated_by;
     x := 0;
     y := 1;
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -181,7 +197,7 @@ PrintJIT2 := function(code, opts)
     od;
     Print("2", " ", opts.cudasubName, "\n");
     Print("------------------\n");
-    Print(SubString(pts, 88, Length(pts)));
+    Print(pts);
 end;
 
 
@@ -458,33 +474,49 @@ end;
 #F    Prints generated code into parseable text file for FFTX jitting with HIP
 #F
 PrintHIPJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, ptr_length, values_ptr, data_var, data_var_loc, old_includes, old_skip, old_generated_by;
     kernels := Collect(code, cu_call); #get kernel names for input
     ckernels := Collect(code, specifiers_func); #get kernel signatures
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
-    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
-    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "hipMalloc")); #getting sizes of device ptrs
+    values_ptr := [];
+    for i in ptr_length do
+      Add(values_ptr, Collect(i, @(1,Value,e->IsInt(e.v))));
+    od;
+    values_ptr := Flat(values_ptr);
+    data_var := Collect(code, @(1, call, e-> e.args[1].id = "hipMemcpyToSymbol"));
+    data_var_loc := [];
+    for i in data_var do
+      Add(data_var_loc, Collect(i, @(1,var,e->e in collection2)));
+    od;
+    data_var_loc := Flat(data_var_loc);
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
+    old_includes := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
     # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
+    opts.unparser.includes := old_includes;
+    opts.unparser.generated_by := old_generated_by;
     x := 0;
     y := 1;
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -546,8 +578,8 @@ PrintHIPJIT := function(code, opts)
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
         Print("\n");
     od;
-    Print("------------------");
-    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+    Print("------------------\n");
+    Print(pts);#skip spiral gen comments and default includes, prints just kernel code
 end;
 
 
@@ -555,7 +587,7 @@ end;
 #F    Prints metadata + generated code into parseable text file for FFTX jitting with OpenCL/Sycl
 #F
 PrintOpenCLJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip, old_generated_by;
     kernels := Collect(code, cu_call); #get kernel names for input
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
@@ -674,15 +706,23 @@ PrintOpenCLJIT := function(code, opts)
             Print(" ", params[i].t.ctype, " ", i, "\n");
         fi;
     od;
-    Print("------------------");
+    Print("------------------\n");
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
+    old_includes := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
     # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
-    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+    opts.unparser.includes := old_includes;
+    opts.unparser.generated_by := old_generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
+    Print(pts);#skip spiral gen comments and default includes, prints just kernel code
 end;
 
 
@@ -818,7 +858,7 @@ PrintIRISMETAJIT := function(code, opts)
             Print(" ", params[i].t.ctype, "\n");
         fi;
     od;
-    Print("------------------");
+    Print("------------------\n");
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
