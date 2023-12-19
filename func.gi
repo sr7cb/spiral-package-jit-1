@@ -100,29 +100,45 @@ end;
 #F    Prints generated code into parseable text file for FFTX jitting
 #F
 PrintJIT2 := function(code, opts)
-    local pts, collection2, x, y, name, j, i, ptr_length, values_ptr, datas, old_includes, old_skip;
+    local pts, collection2, x, y, name, j, i, ptr_length, values_ptr, data_var, data_var_loc, datas, old_includes, old_includes2, old_skip, old_generated_by;
     datas := Collect(code, data);
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false)));
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc")); #getting sizes of device ptrs
-    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    values_ptr := [];
+    for i in ptr_length do
+      Add(values_ptr, Collect(i, @(1,Value,e->IsInt(e.v))));
+    od;
+    values_ptr := Flat(values_ptr);
+    data_var := Collect(code, @(1, call, e-> e.args[1].id = "cudaMemcpyToSymbol"));
+    data_var_loc := [];
+    for i in data_var do
+      Add(data_var_loc, Collect(i, @(1,var,e->e in collection2)));
+    od;
+    data_var_loc := Flat(data_var_loc);
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip());    
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
     code := SubstTopDown(code, @(1, func, e->e.id = "transform"), e-> specifiers_func(["extern \"C\" __global__"], e.ret, opts.cudasubName, e.params, e.cmd));
     old_skip := opts.unparser.skip;
     old_includes := opts.includes;
+    old_includes2 := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code));
     opts.unparser.skip := old_skip;
     opts.includes := old_includes;
+    opts.unparser.includes := old_includes2;
+    opts.unparser.generated_by := old_generated_by;
     x := 0;
     y := 1;
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -181,7 +197,7 @@ PrintJIT2 := function(code, opts)
     od;
     Print("2", " ", opts.cudasubName, "\n");
     Print("------------------\n");
-    Print(SubString(pts, 88, Length(pts)));
+    Print(pts);
 end;
 
 
@@ -458,33 +474,49 @@ end;
 #F    Prints generated code into parseable text file for FFTX jitting with HIP
 #F
 PrintHIPJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j,  i, cg, code2, vars, datas, params, kernels, ckernels, ptr_length, values_ptr, data_var, data_var_loc, old_includes, old_skip, old_generated_by;
     kernels := Collect(code, cu_call); #get kernel names for input
     ckernels := Collect(code, specifiers_func); #get kernel signatures
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
-    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
-    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "hipMalloc")); #getting sizes of device ptrs
+    values_ptr := [];
+    for i in ptr_length do
+      Add(values_ptr, Collect(i, @(1,Value,e->IsInt(e.v))));
+    od;
+    values_ptr := Flat(values_ptr);
+    data_var := Collect(code, @(1, call, e-> e.args[1].id = "hipMemcpyToSymbol"));
+    data_var_loc := [];
+    for i in data_var do
+      Add(data_var_loc, Collect(i, @(1,var,e->e in collection2)));
+    od;
+    data_var_loc := Flat(data_var_loc);
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     #Print(opts.prettyPrint(code));
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
     code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, params, e.cmd))); #changing params to be all inputs
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
+    old_includes := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
     # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
+    opts.unparser.includes := old_includes;
+    opts.unparser.generated_by := old_generated_by;
     x := 0;
     y := 1;
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", _unwrap(values_ptr[Position(data_var_loc, collection2[i])]), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -546,21 +578,168 @@ PrintHIPJIT := function(code, opts)
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
         Print("\n");
     od;
-    Print("------------------");
-    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+    Print("------------------\n");
+    Print(pts);#skip spiral gen comments and default includes, prints just kernel code
 end;
+
+
+#F PrintOpenCLJIT(<c>, <opts>)
+#F    Prints metadata + generated code into parseable text file for FFTX jitting with OpenCL/Sycl
+#F
+PrintOpenCLJIT := function(code, opts)
+    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip, old_generated_by;
+    kernels := Collect(code, cu_call); #get kernel names for input
+    params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
+    datas := Collect(code, data); #get device/constant arrays with value
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+                @(1,var, e-> e.decl_specs[1] = "global" and IsBound(e.value) = false))); #collect none value device arrays
+    collection1 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+                @(1,var, e-> e.decl_specs[1] = "local" and IsBound(e.value) = false))); #collect none value device arrays
+    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
+    code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
+    code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
+    # if Length(collection2) > 0 then 
+    #     code.cmds[1] := decl([], code.cmds[1].cmd);
+    #     for i in collection2 do
+    #         if IsPtrT(i) then
+    #             i.t.qualifiers[1] := "";
+    #             code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [i]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+    #         else 
+    #             var_t := var(i.id, TPtr(i.t.t));
+    #             code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+    #         fi;
+    #     od;
+    # fi;
+    # if Length(datas) > 0 then
+    #     for i in datas do 
+    #         var_t := var(i.var.id, TPtr(i.var.t.t));
+    #         code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+    #     od;
+    # fi;
+    # code := SubstTopDown(code, data, e-> e.cmd);
+    # code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
+    ckernels := Collect(code, specifiers_func); #get kernel signatures
+    x := 0;
+    y := 1;
+    Print("JIT BEGIN\n");
+    for i in collection2::collection1 do
+        if IsPtrT(i.t) then
+            Print(0, " ", i, " ", _unwrap(i.t.size), " ", "pointer_", i.t.t.ctype, " ", i.decl_specs[1], "\n");
+            Print(3, " ", x, " ", _unwrap(i.t.size), " ");
+                if i.t.t.ctype = "int" then
+                    Print(0," ");
+                elif i.t.t.ctype = "float" then
+                    Print(1, " ");
+                elif i.t.t.ctype = "double" then
+                    Print(2, " ");
+                else
+                    Print("how???\n");
+                fi;
+            Print("\n");
+            x := x+1;
+            y := y+1;
+        # elif IsArrayT(collection2[i].t) then
+        #     Print(0, " ", collection2[i], " ", _unwrap(collection2[i].t.size), " ", collection2[i].t.t.ctype, "\n");
+        #     Print(3, " ", x, " ", _unwrap(collection2[i].t.size), " "); 
+        #         if collection2[i].t.t.ctype = "int" then
+        #             Print(0," ");
+        #         elif collection2[i].t.t.ctype = "float" then
+        #             Print(1, " ");
+        #         elif collection2[i].t.t.ctype = "double" then
+        #             Print(2, " ");
+        #         else
+        #             Print("how???\n");
+        #         fi;
+        #     Print("\n");
+        #     x := x+1;
+        # else
+        #     Print("it got here how???\n");
+        fi;
+    od;
+    # for i in [1..Length(datas)] do
+    #     if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
+    #         Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
+    #         Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+    #         if datas[i].var.t.t.ctype = "int" then
+    #             Print(0," ");
+    #         elif datas[i].var.t.t.ctype = "float" then
+    #             Print(1, " ");
+    #         elif datas[i].var.t.t.ctype = "double" then
+    #             Print(2, " ");
+    #         else
+    #             Print("how???\n");
+    #         fi;
+    #         for j in [1..datas[i].var.t.size] do 
+    #             Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+    #         od;
+    #         Print("\n");
+    #         x := x+1;
+    #     elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
+    #         Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
+    #         Print(3, " ", x, " ", datas[i].var.t.size, " ", "3 ");
+    #         for j in [1..Length(_unwrap(datas[i].value))] do
+    #             Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
+    #         od;
+    #         Print("\n"); 
+    #         x := x+1;
+    #     else
+    #         Print("how???\n");
+    #     fi;
+    # od;
+    for i in [1..Length(kernels)] do
+        Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_block.z.value), 
+        " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.x.value));
+        for j in ckernels[i].params do
+            Print(" ", j);
+        od;
+        Print("\n");
+    od;
+    for i in [1..Length(params)] do 
+        if not IsBound(params[i].t.qualifiers) then
+            Error("all OpenCL kernel params require global or local tag\n");
+        fi;
+        Print("4 ", params[i].id);
+        if IsBound(params[i].t.t) and IsBound(params[i].t.t.ctype) then
+            Print(" pointer_", params[i].t.t.ctype, " ", i, "\n");
+        else
+            Print(" ", params[i].t.ctype, " ", i, "\n");
+        fi;
+    od;
+    Print("------------------\n");
+    # old_includes := opts.includes;
+    old_skip := opts.unparser.skip;
+    old_includes := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
+    opts.unparser.skip := (self, o, i, is) >> Print("");
+    # opts.includes := [];
+    pts := PrintToString(opts.prettyPrint(code)); #print to string
+    # opts.includes := old_includes;
+    opts.unparser.skip := old_skip;
+    opts.unparser.includes := old_includes;
+    opts.unparser.generated_by := old_generated_by;
+    opts.unparser.includes := [];
+    opts.unparser.generated_by := "";
+    Print(pts);#skip spiral gen comments and default includes, prints just kernel code
+end;
+
 
 #F PrintIRISMETAJIT(<c>, <opts>)
 #F    Prints metadata + generated code into parseable text file for FFTX jitting with IRIS
 #F
 PrintIRISMETAJIT := function(code, opts)
-    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip;
+    local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, 
+            kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip, read_list,
+            write_list, function_interest, local_size;
     kernels := Collect(code, cu_call); #get kernel names for input
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
-    ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
+    ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc" or e.args[1].id = "hipMalloc"));#getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
@@ -569,17 +748,19 @@ PrintIRISMETAJIT := function(code, opts)
         for i in collection2 do
             if IsPtrT(i) then
                 i.t.qualifiers[1] := "";
-                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [i]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
-            else 
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [i])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+            else
+                local_size := i.t.size; 
                 var_t := var(i.id, TPtr(i.t.t));
-                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+                var_t.t.size := local_size;
+                code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             fi;
         od;
     fi;
     if Length(datas) > 0 then
         for i in datas do 
             var_t := var(i.var.id, TPtr(i.var.t.t));
-            code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(Append(e.params, [var_t]),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
+            code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
         od;
     fi;
     code := SubstTopDown(code, data, e-> e.cmd);
@@ -590,8 +771,8 @@ PrintIRISMETAJIT := function(code, opts)
     Print("JIT BEGIN\n");
     for i in [1..Length(collection2)] do
         if IsPtrT(collection2[i].t) then
-            Print(0, " ", collection2[i], " ", _unwrap(values_ptr[y]), " ", "pointer_", collection2[i].t.t.ctype, "\n");
-            Print(3, " ", x, " ", _unwrap(values_ptr[y]), " ");
+            Print(0, " ", collection2[i], " ", When(IsBound(collection2[i].t.size) and collection2[i].t.size <> 0, _unwrap(collection2[i].t.size), _unwrap(values_ptr[y])), " ", "pointer_", collection2[i].t.t.ctype, "\n");
+            Print(3, " ", x, " ", When(IsBound(collection2[i].t.size) and collection2[i].t.size <> 0, _unwrap(collection2[i].t.size), _unwrap(values_ptr[y])), " ");
                 if collection2[i].t.t.ctype = "int" then
                     Print(0," ");
                 elif collection2[i].t.t.ctype = "float" then
@@ -625,7 +806,7 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(datas)] do
         if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
             Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
-            Print(3, " ", x, " ", datas[i].var.t.size, " "); 
+            Print(3, " ", x, " ",  datas[i].var.t.size, " "); 
             if datas[i].var.t.t.ctype = "int" then
                 Print(0," ");
             elif datas[i].var.t.t.ctype = "float" then
@@ -635,14 +816,11 @@ PrintIRISMETAJIT := function(code, opts)
             else
                 Print("how???\n");
             fi;
-            for j in [1..datas[i].var.t.size] do 
-                Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
-            od;
             Print("\n");
             x := x+1;
         elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
-            Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", "constant", "\n");
-            Print(3, " ", x, " ", datas[i].var.t.size, " ", "3 ");
+            Print(0, " ", datas[i].var, " ", Length(_unwrap(datas[1].value)), " ", "constant", "\n");
+            Print(3, " ", x, " ", Length(_unwrap(datas[1].value)), " ", "3 ");
             for j in [1..Length(_unwrap(datas[i].value))] do
                 Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
             od;
@@ -655,8 +833,20 @@ PrintIRISMETAJIT := function(code, opts)
     for i in [1..Length(kernels)] do
         Print("2", " ", kernels[i].func, " ", _unwrap(kernels[i].dim_grid.x.value), " ", _unwrap(kernels[i].dim_grid.y.value), " ", _unwrap(kernels[i].dim_grid.z.value), " ", _unwrap(kernels[i].dim_block.x.value), 
         " ", _unwrap(kernels[i].dim_block.y.value), " ", _unwrap(kernels[i].dim_block.z.value));
+        function_interest := Collect(code, @(1, specifiers_func, e-> e.id = kernels[i].func));
         for j in ckernels[i].params do
             Print(" ", j);
+            read_list := Collect(function_interest, @(1, assign, e-> j in Collect(e.exp, var)));
+            write_list := Collect(function_interest, @(1, assign, e-> j in Collect(e.loc, var)));
+            if read_list <> [] and write_list = [] then
+                Print(" -1");
+            elif read_list = [] and write_list <> [] then
+                Print(" -2");
+            elif read_list <> [] and write_list <> [] then
+                Print(" -3");
+            else
+                Error("value is never used but in argument list?");
+            fi;
         od;
         Print("\n");
     od;
@@ -668,7 +858,7 @@ PrintIRISMETAJIT := function(code, opts)
             Print(" ", params[i].t.ctype, "\n");
         fi;
     od;
-    Print("------------------");
+    Print("------------------\n");
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
     opts.unparser.skip := (self, o, i, is) >> Print("");
