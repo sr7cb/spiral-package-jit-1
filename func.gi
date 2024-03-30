@@ -737,21 +737,31 @@ PrintIRISMETAJIT := function(code, opts)
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
-                @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false))); #collect none value device arrays
+                @(1,var, e->(e.decl_specs[1] = "__device__" or e.decl_specs[1] = "global") and IsBound(e.value) = false))); #collect none value device arrays
     # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc" or e.args[1].id = "hipMalloc"));#getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
     code := SubstTopDown(code, @(1,func, e->e.id <> "transform"), e->skip()); #removing init/destory
     code := SubstTopDown(code, @(1,func, e->e.id = "transform"), e->skip());# removing transform
-    if Length(collection2) > 0 then 
+    if Length(collection2) > 0 then
+      if opts.unparser.name <> "OpenCLUnparser" then
         code.cmds[1] := decl([], code.cmds[1].cmd);
+      fi;
         for i in collection2 do
             if IsPtrT(i) then
+            if opts.unparser.name <> "OpenCLUnparser" then
                 i.t.qualifiers[1] := "";
+            else
+                i.t := TPtr(i.t.t, ["global"]);
+            fi;
                 code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [i])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             else
-                local_size := i.t.size; 
-                var_t := var(i.id, TPtr(i.t.t));
+                local_size := i.t.size;
+                if opts.unparser.name <> "OpenCLUnparser" then 
+                  var_t := var(i.id, TPtr(i.t.t));
+                else
+                  var_t := var(i.id, TPtr(i.t.t, ["global"]));
+                fi;
                 var_t.t.size := local_size;
                 code := SubstTopDown(code, @(1, specifiers_func, e-> i in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
             fi;
@@ -764,7 +774,9 @@ PrintIRISMETAJIT := function(code, opts)
         od;
     fi;
     code := SubstTopDown(code, data, e-> e.cmd);
-    code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
+    if opts.unparser.name <> "OpenCLUnparser" then
+      code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
+    fi;
     ckernels := Collect(code, specifiers_func); #get kernel signatures
     x := 0;
     y := 1;
@@ -804,7 +816,7 @@ PrintIRISMETAJIT := function(code, opts)
         fi;
     od;
     for i in [1..Length(datas)] do
-        if datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = false then
+        if (datas[i].var.decl_specs[1] = "__device__" or datas[i].var.decl_specs[1] = "global")  and IsBound(datas[i].value) = false then
             Print(0, " ", datas[i].var, " ", datas[i].var.t.size, " ", datas[i].var.t.t.ctype, "\n");
             Print(3, " ", x, " ",  datas[i].var.t.size, " "); 
             if datas[i].var.t.t.ctype = "int" then
@@ -818,13 +830,17 @@ PrintIRISMETAJIT := function(code, opts)
             fi;
             Print("\n");
             x := x+1;
-        elif datas[1].var.decl_specs[1] = "__constant__" or (datas[1].var.decl_specs[1] = "__device__" and IsBound(datas[1].value) = true) then
-            Print(0, " ", datas[i].var, " ", Length(_unwrap(datas[1].value)), " ", "constant", "\n");
-            Print(3, " ", x, " ", Length(_unwrap(datas[1].value)), " ", "3 ");
+        elif datas[i].var.decl_specs[1] = "__constant__" or datas[i].var.decl_specs[1] = "constant" or (datas[i].var.decl_specs[1] = "__device__" and IsBound(datas[i].value) = true) or 
+        (datas[i].var.decl_specs[1] = "global" and IsBound(datas[i].value) = true) then
+            Print(0, " ", datas[i].var, " ", Length(_unwrap(datas[i].value)), " ", "constant", "\n");
+            Print(3, " ", x, " ", Length(_unwrap(datas[i].value)), " ", "3 ");
             for j in [1..Length(_unwrap(datas[i].value))] do
                 Print(_unwrap(_unwrap(datas[i].value)[j]), " ");
             od;
-            Print("\n"); 
+            Print("\n");
+            if opts.unparser.name = "OpenCLUnparser" and datas[i].var.decl_specs[1] = "constant" then
+              datas[i].var.t := TPtr(datas[i].var.t.t, ["global"]);
+            fi;
             x := x+1;
         else
             Print("how???\n");
@@ -861,12 +877,17 @@ PrintIRISMETAJIT := function(code, opts)
     Print("------------------\n");
     # old_includes := opts.includes;
     old_skip := opts.unparser.skip;
+    old_includes := opts.unparser.includes;
+    old_generated_by := opts.unparser.generated_by;
+    opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
     # opts.includes := old_includes;
     opts.unparser.skip := old_skip;
-    Print(SubString(pts, 88, Length(pts)));#skip spiral gen comments and default includes, prints just kernel code
+    opts.unparser.generated_by := old_generated_by;
+    # Print(SubString(pts, 88, Length(pts)));
+    Print(pts);#skip spiral gen comments and default includes, prints just kernel code
 end;
 
 
