@@ -732,12 +732,12 @@ end;
 PrintIRISMETAJIT := function(code, opts)
     local pts, collection1, collection2, x, y, j, i, k, localkernels, code2, vars, datas, params, 
             kernels, ckernels, values_ptr, ptr_length, var_t, old_includes, old_skip, read_list,
-            write_list, function_interest, local_size;
+            write_list, function_interest, local_size, old_generated_by;
     kernels := Collect(code, cu_call); #get kernel names for input
     params := Collect(code, @(1, func, e-> e.id = "transform"))[1].params; #get launch params
     datas := Collect(code, data); #get device/constant arrays with value
     collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
-                @(1,var, e->(e.decl_specs[1] = "__device__" or e.decl_specs[1] = "global") and IsBound(e.value) = false))); #collect none value device arrays
+                @(1,var, e->(e.decl_specs[1] = "__device__" or e.decl_specs[1] = "global" or e.decl_specs[1] = "local") and IsBound(e.value) = false))); #collect none value device arrays
     # ptr_length := Collect(code, @(1, func, e-> e.id = "init")); #getting sizes of device ptrs
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc" or e.args[1].id = "hipMalloc"));#getting sizes of device ptrs
     values_ptr := Collect(ptr_length, @(1,Value, e-> IsInt(e.v))); # getting sizes of device ptrs
@@ -773,7 +773,13 @@ PrintIRISMETAJIT := function(code, opts)
             code := SubstTopDown(code, @(1, specifiers_func, e-> i.var in Collect(e.cmd, var)), e-> let(When(not i in e.params, Append(e.params, [var_t])),specifiers_func(e.decl_specs, e.ret, e.id, e.params, e.cmd)));
         od;
     fi;
-    code := SubstTopDown(code, data, e-> e.cmd);
+    if opts.unparser.name = "OpenCLUnparser" then
+        for i in [1..Length(datas)] do
+            code := SubstTopDown(code, data, e-> e.cmd);
+        od;
+    else
+        code := SubstTopDown(code, data, e-> e.cmd);
+    fi;
     if opts.unparser.name <> "OpenCLUnparser" then
       code := SubstTopDown(code, @(1,specifiers_func), e->let(g := Cond(IsBound(e.decl_specs) and e.decl_specs[1] = "__global__", ["extern \"C\" __global__"], e.decl_specs[1]), specifiers_func(g, e.ret, e.id, e.params, e.cmd))); #changing params to be all inputs
     fi;
@@ -883,7 +889,7 @@ PrintIRISMETAJIT := function(code, opts)
     opts.unparser.skip := (self, o, i, is) >> Print("");
     # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code)); #print to string
-    # opts.includes := old_includes;
+    opts.includes := old_includes;
     opts.unparser.skip := old_skip;
     opts.unparser.generated_by := old_generated_by;
     # Print(SubString(pts, 88, Length(pts)));
