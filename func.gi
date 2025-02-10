@@ -102,7 +102,8 @@ end;
 PrintJIT2 := function(code, opts)
     local pts, collection2, x, y, name, j, i, ptr_length, values_ptr, data_var, data_var_loc, datas, old_includes, old_includes2, old_skip, old_generated_by;
     datas := Collect(code, data);
-    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)), 
+    # collection2 := Set(Collect(Collect(code, @(1,var, e-> IsArrayT(e.t) or IsPtrT(e.t) and IsBound(e.decl_specs) = true)),
+    collection2 := Set(Collect(Collect(code, @(1,var, e-> IsPtrT(e.t) and IsBound(e.decl_specs) = true)),  #shouldn't need to collect static device arrays
                 @(1,var, e->e.decl_specs[1] = "__device__" and IsBound(e.value) = false)));
     ptr_length := Collect(code, @(1, call, e-> e.args[1].id = "cudaMalloc")); #getting sizes of device ptrs
     values_ptr := [];
@@ -126,7 +127,7 @@ PrintJIT2 := function(code, opts)
     opts.unparser.includes := [];
     opts.unparser.generated_by := "";
     opts.unparser.skip := (self, o, i, is) >> Print("");
-    opts.includes := [];
+    # opts.includes := [];
     pts := PrintToString(opts.prettyPrint(code));
     opts.unparser.skip := old_skip;
     opts.includes := old_includes;
